@@ -72,3 +72,10 @@ checkpoints/vgg11_classifier_best.pt
 - **Coordinate scaling:** final `Sigmoid` constrains predictions to `[0, 1]` normalized image coordinates for stable training and bounded outputs.
 - **Custom loss:** `IoULoss` is implemented from scratch for center-format boxes with numerically stable eps handling.
 
+## Task 3: U-Net style semantic segmentation
+
+- **Architecture:** `VGG11UNet` uses `VGG11Encoder` as the contracting path and a symmetric expansive decoder.
+- **Learnable upsampling:** each decoder stage uses `ConvTranspose2d` (stride 2) for upsampling.
+- **Feature fusion:** upsampled decoder features are concatenated with spatially aligned encoder skip maps at every level.
+- **Loss choice:** use **pixel-wise `CrossEntropyLoss`** over segmentation logits. This is appropriate because trimap segmentation is a 3-class per-pixel classification problem (foreground / boundary / background), and CE provides stable gradients for mutually-exclusive classes without requiring manual thresholding.
+

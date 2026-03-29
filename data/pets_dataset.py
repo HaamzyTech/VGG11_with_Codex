@@ -1,9 +1,10 @@
-"""Oxford-IIIT Pet dataset loader for classification/localization."""
+"""Oxford-IIIT Pet dataset loader for classification/localization/segmentation."""
 
 from pathlib import Path
 from typing import Callable, Optional, Tuple
 import xml.etree.ElementTree as ET
 
+import numpy as np
 from PIL import Image
 from torch.utils.data import Dataset
 
@@ -18,6 +19,7 @@ class OxfordIIITPetDataset(Dataset):
     Supported targets:
     - ``classification``: returns breed label in [0, 36]
     - ``localization``: returns bbox [x_center, y_center, width, height] normalized to [0, 1]
+    - ``segmentation``: returns trimap mask in class ids [0, 1, 2]
     """
 
     def __init__(
@@ -32,14 +34,15 @@ class OxfordIIITPetDataset(Dataset):
         self.images_dir = self.root / "images"
         self.annotations_dir = self.root / "annotations"
         self.xml_dir = self.annotations_dir / "xmls"
+        self.trimaps_dir = self.annotations_dir / "trimaps"
         self.transform = transform
         self.target_transform = target_transform
         self.target_type = target_type
 
         if split not in {"trainval", "test"}:
             raise ValueError(f"Unsupported split: {split}. Use 'trainval' or 'test'.")
-        if self.target_type not in {"classification", "localization"}:
-            raise ValueError("target_type must be one of {'classification', 'localization'}")
+        if self.target_type not in {"classification", "localization", "segmentation"}:
+            raise ValueError("target_type must be one of {'classification', 'localization', 'segmentation'}")
 
         split_file = self.annotations_dir / f"{split}.txt"
         if not split_file.exists():
@@ -60,8 +63,10 @@ class OxfordIIITPetDataset(Dataset):
 
                 if self.target_type == "classification":
                     target = label
-                else:
+                elif self.target_type == "localization":
                     target = self._load_normalized_bbox(name)
+                else:
+                    target = self._load_trimap(name)
 
                 self.samples.append((image_path, target))
 
@@ -90,6 +95,14 @@ class OxfordIIITPetDataset(Dataset):
         y_center = ymin + box_h / 2.0
 
         return [x_center / width, y_center / height, box_w / width, box_h / height]
+
+    def _load_trimap(self, image_id: str):
+        mask_path = self.trimaps_dir / f"{image_id}.png"
+        if not mask_path.exists():
+            raise FileNotFoundError(f"Missing trimap annotation for {image_id}: {mask_path}")
+        trimap = np.array(Image.open(mask_path), dtype=np.int64)
+        # Dataset trimap labels are {1,2,3}; convert to {0,1,2}.
+        return trimap - 1
 
     def __len__(self) -> int:
         return len(self.samples)
