@@ -63,3 +63,12 @@ The best model checkpoint is saved to:
 ```text
 checkpoints/vgg11_classifier_best.pt
 ```
+
+## Task 2: Object localization extension
+
+- **Encoder adaptation:** `VGG11Localizer` reuses the Task-1 `VGG11Encoder` backbone and optionally loads encoder weights from a trained classifier checkpoint.
+- **Freeze vs fine-tune:** default is **fine-tuning** (`freeze_encoder=False`) because localization depends on spatially precise features; freezing is supported for faster training when compute is constrained.
+- **Regression head:** a compact MLP head predicts exactly four values `[x_center, y_center, width, height]`.
+- **Coordinate scaling:** final `Sigmoid` constrains predictions to `[0, 1]` normalized image coordinates for stable training and bounded outputs.
+- **Custom loss:** `IoULoss` is implemented from scratch for center-format boxes with numerically stable eps handling.
+
