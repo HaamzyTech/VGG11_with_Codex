@@ -1,7 +1,8 @@
-"""Training entrypoint for Oxford-IIIT Pet breed classification."""
+"""Training entrypoint for Oxford-IIIT Pet breed classification with optional W&B logging."""
 
 import argparse
 from pathlib import Path
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -15,6 +16,26 @@ from models.classification import VGG11Classifier
 def accuracy(logits: torch.Tensor, targets: torch.Tensor) -> float:
     preds = torch.argmax(logits, dim=1)
     return (preds == targets).float().mean().item()
+
+
+def _get_third_conv_module(model: VGG11Classifier) -> nn.Module:
+    convs = [m for m in model.encoder.features if isinstance(m, nn.Conv2d)]
+    if len(convs) < 3:
+        raise RuntimeError("Expected at least 3 convolution layers in encoder")
+    return convs[2]
+
+
+def _capture_activation(model: VGG11Classifier, batch: torch.Tensor) -> torch.Tensor:
+    activations = {}
+
+    def hook(_module, _inp, out):
+        activations["act"] = out.detach().flatten().cpu()
+
+    h = _get_third_conv_module(model).register_forward_hook(hook)
+    with torch.no_grad():
+        _ = model(batch)
+    h.remove()
+    return activations["act"]
 
 
 def run_epoch(model, loader, criterion, device, optimizer=None):
@@ -45,6 +66,20 @@ def run_epoch(model, loader, criterion, device, optimizer=None):
     return total_loss / total_samples, total_acc / total_samples
 
 
+def maybe_init_wandb(args) -> Optional[object]:
+    if not args.use_wandb:
+        return None
+    import wandb
+
+    run = wandb.init(
+        project=args.wandb_project,
+        entity=args.wandb_entity if args.wandb_entity else None,
+        name=args.wandb_run_name if args.wandb_run_name else None,
+        config=vars(args),
+    )
+    return run
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-root", type=str, required=True, help="Path to Oxford-IIIT Pet root directory")
@@ -57,9 +92,15 @@ def main():
     parser.add_argument("--val-ratio", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--save-dir", type=str, default="checkpoints")
+    parser.add_argument("--use-wandb", action="store_true")
+    parser.add_argument("--wandb-project", type=str, default="oxford-pets-vgg11")
+    parser.add_argument("--wandb-entity", type=str, default="")
+    parser.add_argument("--wandb-run-name", type=str, default="")
+    parser.add_argument("--log-activations", action="store_true", help="Log 3rd-conv activation histogram to W&B")
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
+    wandb_run = maybe_init_wandb(args)
 
     train_tfms = transforms.Compose([
         transforms.Resize((224, 224)),
@@ -108,6 +149,23 @@ def main():
             f"val_loss={val_loss:.4f} val_acc={val_acc:.4f}"
         )
 
+        if wandb_run is not None:
+            payload = {
+                "epoch": epoch,
+                "train/loss": train_loss,
+                "train/acc": train_acc,
+                "val/loss": val_loss,
+                "val/acc": val_acc,
+                "lr": optimizer.param_groups[0]["lr"],
+            }
+            if args.log_activations:
+                images, _ = next(iter(val_loader))
+                images = images.to(device)
+                acts = _capture_activation(model, images)
+                import wandb
+                payload["activations/conv3_hist"] = wandb.Histogram(acts.numpy())
+            wandb_run.log(payload)
+
         if val_acc > best_val_acc:
             best_val_acc = val_acc
             torch.save(
@@ -125,6 +183,10 @@ def main():
     model.load_state_dict(ckpt["model_state_dict"])
     test_loss, test_acc = run_epoch(model, test_loader, criterion, device, optimizer=None)
     print(f"Test metrics | loss={test_loss:.4f} acc={test_acc:.4f}")
+
+    if wandb_run is not None:
+        wandb_run.log({"test/loss": test_loss, "test/acc": test_acc})
+        wandb_run.finish()
 
 
 if __name__ == "__main__":
