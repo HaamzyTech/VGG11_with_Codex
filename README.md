@@ -64,6 +64,93 @@ The best model checkpoint is saved to:
 checkpoints/vgg11_classifier_best.pt
 ```
 
+
+## Running on a PBS GPU cluster
+
+If your HPC uses PBS/Torque (or PBS Pro), the easiest pattern is to submit a batch script that:
+
+1. Activates your Python environment.
+2. Verifies CUDA is visible.
+3. Launches `train.py` with your dataset path.
+
+### 1) Create a job script
+
+Save this as `train_vgg11.pbs` and edit placeholders for your cluster (`<ACCOUNT>`, queue name, module names, and paths):
+
+```bash
+#!/bin/bash
+#PBS -N vgg11_pets_train
+#PBS -A <ACCOUNT>
+#PBS -q gpu
+#PBS -l select=1:ncpus=8:ngpus=1:mem=32gb
+#PBS -l walltime=24:00:00
+#PBS -j oe
+
+set -euo pipefail
+
+cd "$PBS_O_WORKDIR"
+
+# Optional: load site-specific modules
+module purge
+module load cuda/12.1
+module load python/3.10
+
+# Create/activate virtual environment (first run)
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+
+# Confirm GPU visibility
+python - <<'CHECK'
+import torch
+print('torch:', torch.__version__)
+print('cuda available:', torch.cuda.is_available())
+print('device count:', torch.cuda.device_count())
+if torch.cuda.is_available():
+    print('device 0:', torch.cuda.get_device_name(0))
+CHECK
+
+# Launch training
+python train.py \
+  --data-root /path/to/oxford-iiit-pet \
+  --epochs 30 \
+  --batch-size 64 \
+  --num-workers 8 \
+  --lr 1e-3 \
+  --dropout 0.5
+```
+
+Submit with:
+
+```bash
+qsub train_vgg11.pbs
+```
+
+Monitor with:
+
+```bash
+qstat -u $USER
+```
+
+### 2) Interactive debugging on a GPU node (optional)
+
+Useful for quick checks before long runs:
+
+```bash
+qsub -I -q gpu -l select=1:ncpus=4:ngpus=1:mem=16gb,walltime=02:00:00
+```
+
+Then activate your env and run a short training smoke test (e.g., fewer epochs, smaller batch size).
+
+### 3) Common PBS cluster tips
+
+- Use `$PBS_O_WORKDIR` to run from the directory where you submitted `qsub`.
+- Keep datasets on a high-throughput shared filesystem (not small home quotas).
+- Increase `--num-workers` gradually to match allocated CPUs and avoid I/O bottlenecks.
+- If your cluster uses `conda` instead of `venv`, replace activation commands accordingly.
+- Some clusters require different resource keys (`nodes:ppn:gpus` vs `select=...`). If `qsub` rejects your script, check your site docs and adapt the `#PBS -l` line.
+
 ## Task 2: Object localization extension
 
 - **Encoder adaptation:** `VGG11Localizer` reuses the Task-1 `VGG11Encoder` backbone and optionally loads encoder weights from a trained classifier checkpoint.
