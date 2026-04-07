@@ -65,6 +65,15 @@ checkpoints/vgg11_classifier_best.pt
 ```
 
 
+
+## Notebook (Google Colab compatible)
+
+A notebook version of the training pipeline is available at:
+
+- `VGG11_OxfordPets_Colab.ipynb`
+
+It includes Colab bootstrap steps, dependency installation, dataset setup, and the end-to-end training/evaluation loop.
+
 ## Running on a PBS GPU cluster
 
 If your HPC uses PBS/Torque (or PBS Pro), the easiest pattern is to submit a batch script that:
